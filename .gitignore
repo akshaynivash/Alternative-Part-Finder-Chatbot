@@ -6,6 +6,7 @@
 !*.ipynb
 !*.md
 !*.txt
+!report.pdf
 
 # Allow directories (so folder structure is maintained)
 !*/
