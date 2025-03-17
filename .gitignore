@@ -4,6 +4,8 @@
 # Allow Python and Jupyter Notebook files
 !*.py
 !*.ipynb
+!*.md
+!*.txt
 
 # Allow directories (so folder structure is maintained)
 !*/
