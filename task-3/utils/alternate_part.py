@@ -1,133 +1,197 @@
 import streamlit as st
 import pandas as pd
 from utils.find_alternative_parts_balanced import find_alternative_parts_balanced
-from transformers import AutoModelForCausalLM, AutoTokenizer  # For Phi-1.5 integration
-import torch
 
 
-device= "cuda" 
-# Load Product Data
+# ----------------------------
+# Data loading
+# ----------------------------
 @st.cache_resource
 def load_data():
     df = pd.read_csv("data/Partscleaned.csv")
-    df.columns = df.columns.str.strip()  # Remove unwanted spaces
+    df.columns = df.columns.str.strip()
     return df
+
 
 df = load_data()
 
-# Load Phi-1.5 model and tokenizer
+
+# ----------------------------
+# AI explanation (Phi-1.5) -- loaded lazily, only if the user enables it
+# ----------------------------
 @st.cache_resource
 def load_phi_model():
-    model_path = "models/phi-1.5"  # Path to your downloaded Phi-1.5 model
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    model_path = "models/phi-1.5"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     model = AutoModelForCausalLM.from_pretrained(model_path)
     return tokenizer, model
 
-tokenizer, model = load_phi_model()
 
-def generate_ai_explanation(prompt):
-    """
-    Generate an AI-based explanation using Phi-1.5.
-    """
+def generate_ai_explanation(prompt: str) -> str:
+    tokenizer, model = load_phi_model()
     inputs = tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
     outputs = model.generate(
         inputs.input_ids,
-        max_length=200,  # Limit response length
+        max_length=200,
         num_return_sequences=1,
-        temperature=0.7,  # Control creativity
-        top_p=0.9,  # Nucleus sampling
+        temperature=0.7,
+        top_p=0.9,
         do_sample=True,
     )
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return response
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
+
+# ----------------------------
+# Rule-based explanation -- the fallback when AI explanations are off
+# (or the Phi-1.5 weights aren't installed at all)
+# ----------------------------
+def rule_based_physics_explanation(fuse_type: str, application: str) -> str:
+    if "Slow Blow" in fuse_type:
+        return (
+            "➡️ This is a **Slow Blow fuse**, designed to handle inrush currents before melting. "
+            "It is thermally activated and ideal for **power supply circuits**, where temporary surges are expected."
+        )
+    if "Fast Blow" in fuse_type:
+        return (
+            "➡️ This is a **Fast Blow fuse**, which melts **quickly** when exceeding the rated current. "
+            "It is commonly used in **sensitive electronic circuits** that require immediate disconnection upon overload."
+        )
+    return (
+        "➡️ This fuse operates based on **thermal dissipation and overload conditions**, "
+        f"ensuring circuit protection in applications like **{application}**."
+    )
+
+
+def rule_based_justification(fuse_type, alt_fuse_type, rated_current, alt_rated_current, rated_voltage, alt_rated_voltage, mounting, alt_mounting) -> str:
+    explanation = "💡 **Why?** This alternative "
+    if fuse_type == alt_fuse_type:
+        explanation += f"shares the same **{fuse_type} fuse type**, ensuring similar thermal characteristics. "
+    else:
+        explanation += f"has a slightly different fuse type ({alt_fuse_type}), but remains functionally compatible. "
+
+    if abs(float(str(alt_rated_current).replace("A", "")) - float(str(rated_current).replace("A", ""))) <= 1:
+        explanation += f"Its **current rating ({alt_rated_current}A)** is close to the original, ensuring safe operation. "
+    else:
+        explanation += f"It has a **higher/lower current rating ({alt_rated_current}A)** but still fits within tolerance limits. "
+
+    if abs(float(str(alt_rated_voltage).replace("V", "")) - float(str(rated_voltage).replace("V", ""))) <= 10:
+        explanation += f"The voltage rating is within the **acceptable ±10% range ({alt_rated_voltage}V)**. "
+    else:
+        explanation += f"The voltage rating differs ({alt_rated_voltage}V), but remains within functional limits. "
+
+    if mounting == alt_mounting:
+        explanation += f"Additionally, it fits the **same mounting type ({alt_mounting})**, making installation easier."
+    else:
+        explanation += f"Though the mounting type ({alt_mounting}) differs, it is still mechanically compatible."
+
+    return explanation
+
+
+# ----------------------------
+# The single, unified Part Finder page
+# ----------------------------
 def alternative_part_page():
-    st.title("🔍 Alternative Part Finder with AI Insights")
+    st.title("🔍 Alternative Part Finder")
 
-    # Sidebar Debugging
+    use_ai = st.checkbox(
+        "🤖 Use AI-generated explanations (Phi-1.5)",
+        value=False,
+        help="Off by default -- requires the Phi-1.5 weights to be installed locally (see model_install.py). "
+        "When off, explanations are generated by fast, deterministic rules instead.",
+    )
+
     if st.sidebar.button("Show Columns"):
         st.write(df.columns.tolist())
 
-    # Initialize session state for relaxation tier
     if "relaxation_tier" not in st.session_state:
-        st.session_state.relaxation_tier = "Tier 1"  # Default to Tier 1
+        st.session_state.relaxation_tier = "Tier 1"
 
-    # Ask for Product ID
     product_id = st.text_input("Enter Product ID to find alternatives:")
+    if not product_id:
+        return
 
-    if product_id:
-        # Retrieve the selected part details
-        selected_part = df[df["ID"] == product_id]
+    selected_rows = df[df["ID"] == product_id]
+    if selected_rows.empty:
+        st.error("⚠️ Product ID not found in database. Please enter a valid ID.")
+        return
 
-        if selected_part.empty:
-            st.error("⚠️ Product ID not found in database. Please enter a valid ID.")
-            return
+    selected_part = selected_rows.iloc[0]
 
-        selected_part = selected_part.iloc[0]  # Convert to Series
+    part_description = selected_part.get("DESCRIPTION", "Unknown Part")
+    fuse_type = str(selected_part.get("Attribut1", "Unknown"))
+    rated_current = selected_part.get("Rated Current (A)", "N/A")
+    rated_voltage = selected_part.get("Rated Voltage (V)", "N/A")
+    breaking_capacity = selected_part.get("Rated Breaking Capacity (A)", "N/A")
+    mounting = selected_part.get("Mounting", "N/A")
+    application = selected_part.get("Application", "N/A")
 
-        # Extract attributes
-        part_description = selected_part.get("DESCRIPTION", "Unknown Part")
-        fuse_type = str(selected_part.get("Attribut1", "Unknown"))  # Ensure fuse_type is a string
-        rated_current = selected_part.get("Rated Current (A)", "N/A")
-        rated_voltage = selected_part.get("Rated Voltage (V)", "N/A")
-        breaking_capacity = selected_part.get("Rated Breaking Capacity (A)", "N/A")
-        mounting = selected_part.get("Mounting", "N/A")
-        application = selected_part.get("Application", "N/A")
+    st.subheader("📌 Product Analysis")
+    st.write(f"🔹 **{part_description}**")
 
-        # Show only product description
-        st.subheader("📌 Product Analysis")
-        st.write(f"🔹 **{part_description}**")
+    st.write("🔬 **Physics-Based Explanation:**")
+    if use_ai:
+        physics_prompt = (
+            f"Explain the physics behind a {fuse_type} fuse with a rated current of {rated_current}A, "
+            f"rated voltage of {rated_voltage}V, and breaking capacity of {breaking_capacity}A. "
+            f"It is used in {application} applications."
+        )
+        st.write(generate_ai_explanation(physics_prompt))
+    else:
+        st.write(rule_based_physics_explanation(fuse_type, application))
 
-        # Generate AI-based Physics-Based Explanation
-        st.write(f"🔬 **Physics-Based Explanation (AI-Generated):**")
-        physics_prompt = f"Explain the physics behind a {fuse_type} fuse with a rated current of {rated_current}A, rated voltage of {rated_voltage}V, and breaking capacity of {breaking_capacity}A. It is used in {application} applications."
-        physics_explanation = generate_ai_explanation(physics_prompt)
-        st.write(physics_explanation)
+    st.write(f"⚡ **Rated Current:** {rated_current}A, **Rated Voltage:** {rated_voltage}V")
+    st.write(f"🔥 **Breaking Capacity:** {breaking_capacity}A, **Mounting:** {mounting}")
 
-        st.write(f"⚡ **Rated Current:** {rated_current}A, **Rated Voltage:** {rated_voltage}V")
-        st.write(f"🔥 **Breaking Capacity:** {breaking_capacity}A, **Mounting:** {mounting}")
+    alternatives = find_alternative_parts_balanced(selected_part, df, relaxation_tier=st.session_state.relaxation_tier)
 
-        # Progressive relaxation logic
-        relaxation_tiers = ["Tier 1", "Tier 2", "Tier 3", "Tier 4", "Tier 5"]
-        alternatives = pd.DataFrame()
+    if alternatives.empty:
+        st.warning("⚠️ No suitable alternatives found.")
+    else:
+        st.subheader("✅ Alternative Products & Justification:")
+        for _, row in alternatives.iterrows():
+            alternative_id = row.get("ID", "Unknown ID")
+            alternative_description = row.get("DESCRIPTION", "Unknown Part")
+            alt_fuse_type = str(row.get("Attribut1", "Unknown"))
+            alt_rated_current = row.get("Rated Current (A)", "N/A")
+            alt_rated_voltage = row.get("Rated Voltage (V)", "N/A")
+            alt_breaking_capacity = row.get("Rated Breaking Capacity (A)", "N/A")
+            alt_mounting = row.get("Mounting", "N/A")
 
-        for tier in relaxation_tiers:
-            if alternatives.empty:  # Only proceed if no alternatives found yet
-                st.session_state.relaxation_tier = tier
-                alternatives = find_alternative_parts_balanced(selected_part, df, relaxation_tier=tier)
+            st.write(f"🔹 **[{alternative_id}] {alternative_description}**")
 
-        if alternatives.empty:
-            st.warning("⚠️ No suitable alternatives found even after relaxing all constraints.")
-        else:
-            st.subheader("✅ Alternative Products & Justification (AI-Generated):")
-            for _, row in alternatives.iterrows():
-                alternative_id = row.get("ID", "Unknown ID")
-                alternative_description = row.get("DESCRIPTION", "Unknown Part")
-                alt_fuse_type = str(row.get("Attribut1", "Unknown"))  # Ensure alt_fuse_type is a string
-                alt_rated_current = row.get("Rated Current (A)", "N/A")
-                alt_rated_voltage = row.get("Rated Voltage (V)", "N/A")
-                alt_breaking_capacity = row.get("Rated Breaking Capacity (A)", "N/A")
-                alt_mounting = row.get("Mounting", "N/A")
-
-                # Show Product ID + Description
-                st.write(f"🔹 **[{alternative_id}] {alternative_description}**")
-
-                # Generate AI-based justification for the alternative
+            if use_ai:
                 justification_prompt = (
-                    f"Explain why this alternative part with a {alt_fuse_type} fuse type, rated current of {alt_rated_current}A, "
-                    f"rated voltage of {alt_rated_voltage}V, and breaking capacity of {alt_breaking_capacity}A is a suitable replacement "
-                    f"for the original part with a {fuse_type} fuse type, rated current of {rated_current}A, rated voltage of {rated_voltage}V, "
-                    f"and breaking capacity of {breaking_capacity}A. The mounting type is {alt_mounting}."
+                    f"Explain why this alternative part with a {alt_fuse_type} fuse type, rated current of "
+                    f"{alt_rated_current}A, rated voltage of {alt_rated_voltage}V, and breaking capacity of "
+                    f"{alt_breaking_capacity}A is a suitable replacement for the original part with a {fuse_type} "
+                    f"fuse type, rated current of {rated_current}A, rated voltage of {rated_voltage}V, and "
+                    f"breaking capacity of {breaking_capacity}A. The mounting type is {alt_mounting}."
                 )
-                justification = generate_ai_explanation(justification_prompt)
-                st.write(f"💡 **Why?** {justification}")
+                st.write(f"💡 **Why?** {generate_ai_explanation(justification_prompt)}")
+            else:
+                st.write(
+                    rule_based_justification(
+                        fuse_type, alt_fuse_type, rated_current, alt_rated_current,
+                        rated_voltage, alt_rated_voltage, mounting, alt_mounting,
+                    )
+                )
 
-            # Justification for Relaxations in Filtering
-            st.subheader("⚖️ Why Are Some Relaxations Allowed?")
-            st.write("➡️ In some cases, exact matches are **not available**, so the following relaxations are considered:")
-            st.write("✔️ **Voltage Relaxation (±10%)** → Allows alternatives within an acceptable range to function safely.")
-            st.write("✔️ **Breaking Capacity Tolerance** → Small deviations are permitted if they don't impact circuit safety.")
-            st.write("✔️ **Mechanical Fitment Adjustments** → If functionally compatible, slight variations in mounting style may be acceptable.")
+        if len(alternatives) < 5:
+            st.write("🔔 **Fewer than 5 alternatives found. You can relax constraints further:**")
+            if st.button("Relax Current Tolerance (±5A)"):
+                st.session_state.relaxation_tier = "Tier 3"
+                st.rerun()
+            if st.button("Allow Different Mounting Styles"):
+                st.session_state.relaxation_tier = "Tier 4"
+                st.rerun()
+            if st.button("Allow Different Fuse Types"):
+                st.session_state.relaxation_tier = "Tier 5"
+                st.rerun()
 
-# Run the app
-alternative_part_page()
+        st.subheader("⚖️ Why Are Some Relaxations Allowed?")
+        st.write("➡️ In some cases, exact matches are **not available**, so the following relaxations are considered:")
+        st.write("✔️ **Voltage Relaxation (±10%)** → Allows alternatives within an acceptable range to function safely.")
+        st.write("✔️ **Breaking Capacity Tolerance** → Small deviations are permitted if they don't impact circuit safety.")
+        st.write("✔️ **Mechanical Fitment Adjustments** → If functionally compatible, slight variations in mounting style may be acceptable.")

@@ -7,7 +7,11 @@ chroma_client = chromadb.PersistentClient(path="./data/chroma_db")
 schedule_collection = chroma_client.get_or_create_collection(name="daily_schedule")
 
 def store_schedule():
-    """Stores a predefined weekly schedule in ChromaDB."""
+    """Stores a predefined weekly schedule in ChromaDB. Safe to re-run -- skips if already populated."""
+    if schedule_collection.count() > 0:
+        print("Schedule already populated, skipping.")
+        return
+
     schedule_collection.add(
         ids=[
             "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
@@ -36,6 +40,15 @@ def store_schedule():
 def retrieve_schedule(day):
     """Retrieve the schedule for a specific day."""
     results = schedule_collection.query(query_texts=[day], n_results=1)
-    return results["documents"][0] if results["documents"] else "No schedule found."
-# Store the schedule (call this once to populate the collection)
-store_schedule()
+    # query() nests results per query-text ([[doc, ...]]), so [0] alone is still a
+    # list, not the document string -- need [0][0] to get the actual text.
+    if results["documents"] and results["documents"][0]:
+        return results["documents"][0][0]
+    return "No schedule found."
+
+
+if __name__ == "__main__":
+    # One-time setup: `python backend/chroma_db.py` to populate the schedule collection.
+    # No longer runs automatically on import -- importing this module used to have the
+    # side effect of re-inserting (and erroring on duplicate IDs) every single time.
+    store_schedule()
