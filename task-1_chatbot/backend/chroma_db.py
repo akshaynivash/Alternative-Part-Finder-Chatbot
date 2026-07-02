@@ -40,7 +40,11 @@ def store_schedule():
 def retrieve_schedule(day):
     """Retrieve the schedule for a specific day."""
     results = schedule_collection.query(query_texts=[day], n_results=1)
-    return results["documents"][0] if results["documents"] else "No schedule found."
+    # query() nests results per query-text ([[doc, ...]]), so [0] alone is still a
+    # list, not the document string -- need [0][0] to get the actual text.
+    if results["documents"] and results["documents"][0]:
+        return results["documents"][0][0]
+    return "No schedule found."
 
 
 if __name__ == "__main__":

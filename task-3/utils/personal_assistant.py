@@ -75,7 +75,11 @@ def _build_tools(llm, vectorstore, schedule_collection):
     def schedule_tool(day: str) -> str:
         day = day.strip().capitalize()
         results = schedule_collection.query(query_texts=[day], n_results=1)
-        schedule_info = results["documents"][0] if results["documents"] else f"No schedule found for {day}."
+        # query() nests results per query-text ([[doc, ...]]), so [0] alone is still a
+        # list, not the document string -- need [0][0] to get the actual text.
+        schedule_info = (
+            results["documents"][0][0] if results["documents"] and results["documents"][0] else f"No schedule found for {day}."
+        )
         return llm(
             "You are my personal assistant who is very familiar with my daily schedule. "
             f"I have the following schedule for {day}:\n\n{schedule_info}\n\n"
