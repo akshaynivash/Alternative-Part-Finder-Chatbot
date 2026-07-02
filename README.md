@@ -1,28 +1,35 @@
 # Engineer's Workday Assistant
 
-A React + FastAPI app with three tools at one workbench — part sourcing, quick
-chat, and workday help — each independently useful, none of them the "main"
-feature. Part sourcing uses a tiered relaxation matching algorithm to find
-alternative electronic parts (fuses); the other two pages cover general chat
-and day-to-day assistant work (chat, study Q&A, meal planning, daily task
-tracking). An async FastAPI backend (`backend/`) holds all the real logic;
-a React/Vite/TypeScript frontend (`frontend/`) talks to it over HTTP.
+Three tools at one workbench, none of them the "main" feature: **part sourcing** (tiered relaxation matching for alternative electronic parts), **quick chat** (casual conversation via a local model), and **workday help** (a tool-calling agent for schedule, meal planning, and study Q&A). An async FastAPI backend holds all the real logic; a React/Vite/TypeScript frontend talks to it over HTTP.
+
+[![CI](https://github.com/akshaynivash/Alternative-Part-Finder-Chatbot/actions/workflows/ci.yml/badge.svg)](https://github.com/akshaynivash/Alternative-Part-Finder-Chatbot/actions/workflows/ci.yml)
+[![Backend CI](https://github.com/akshaynivash/Alternative-Part-Finder-Chatbot/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/akshaynivash/Alternative-Part-Finder-Chatbot/actions/workflows/backend-ci.yml)
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript)
+
+![Demo](docs/demo.gif)
+
+A ~21s promo (also available as [`docs/demo.mp4`](docs/demo.mp4) for higher quality). See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md#demo-video) for what it actually is — a Remotion-authored recreation of the app's screens, not a screen capture — plus architecture diagrams and the reasoning behind the non-obvious decisions.
 
 ## Features
 
-- **Part Sourcing** — enter a part ID, get ranked alternatives via a
-  5-tier relaxation algorithm (exact match → progressively relaxed current/
-  breaking-capacity/mounting/fuse-type constraints). Explanations are
-  rule-based by default, with an optional AI-generated mode (Phi-1.5).
-- **Quick Chat** — general conversation via a locally running Ollama model.
-- **Workday Help** — a LangChain tool-calling agent routes chat to the
-  right capability (study assistant over a local FAISS index, daily schedule
-  lookup, weekly meal planning) instead of matching on hardcoded keywords.
-  Daily tasks are tracked in ChromaDB.
+- **Part Sourcing** — enter a part ID, get ranked alternatives via a 5-tier relaxation algorithm (exact match → progressively relaxed current/breaking-capacity/mounting/fuse-type constraints), with a browse/search panel for when you don't know which ID to try. Explanations are rule-based by default, with an optional AI-generated mode (Phi-1.5).
+- **Quick Chat** — general conversation via a locally running Ollama model. No cloud API key, nothing leaves your machine.
+- **Workday Help** — a LangChain tool-calling agent routes chat to the right capability (study assistant over a local FAISS index, daily schedule lookup, weekly meal planning) instead of matching on hardcoded keywords, plus a daily task check-in tracker backed by ChromaDB.
+- **Independent graceful degradation** — every optional dependency (Ollama, Phi-1.5 weights) fails on its own and explains itself with a specific fix, instead of crashing the app or leaving you guessing. Part Sourcing works with zero local models installed.
 
-Each page degrades gracefully and independently if its dependencies aren't
-installed/configured — the whole app doesn't crash because one model isn't
-downloaded or one service isn't running.
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Frontend | React 18 + Vite + TypeScript + Tailwind + shadcn/ui |
+| Backend | FastAPI (async), Pydantic, `uv`-managed |
+| Matching engine | pandas, tiered constraint relaxation |
+| Chat / agent | LangChain (`create_agent`) over a locally running Ollama model |
+| Retrieval | Local FAISS index (study material), ChromaDB (tasks + schedule) |
+| Tests / lint | pytest + ruff (backend), ESLint (frontend) |
 
 ## Setup
 
@@ -100,3 +107,7 @@ Backend tests cover the matching engine, ChromaDB-backed storage, and the API
 layer (HTTP status codes, validation) — all run without any external services
 or credentials. CI is split by path: `.github/workflows/backend-ci.yml` runs
 on `backend/**` changes, `.github/workflows/ci.yml` runs on everything else.
+
+## More
+
+See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for architecture diagrams (system overview, the tiered-relaxation matching flow, the agent's tool-routing flow), the data model, and more detail on the graceful-degradation design.
